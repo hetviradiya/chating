@@ -200,7 +200,7 @@
   </head>
   <body>
     <div id="app">
-      <!-- Login Screen -->
+      <!-- Login Setup Screen -->
       <div id="auth-screen">
         <h2>Secure Chat Room</h2>
         <label style="font-size: 0.8rem; color: #94a3b8">Who are you?</label>
@@ -340,7 +340,6 @@
         }
       }
 
-      // Auto Purge Cleanup Job (Runs upon entering room)
       async function runAutoPurge() {
         try {
           const now = Date.now();
@@ -363,7 +362,7 @@
             }
           });
         } catch (e) {
-          console.warn("Auto purge check finished:", e);
+          console.warn("Auto purge check error:", e);
         }
       }
 
@@ -424,8 +423,11 @@
               ? `<button class="del-msg-btn" onclick="deleteSingleMessage('${data.id}')">Delete</button>`
               : "";
 
+            // Check explicitly if data is an image OR if plaintext starts with image data URL
+            const isImage = data.type === "image" || plainText.startsWith("data:image/");
+
             let contentHtml = "";
-            if (data.type === "image") {
+            if (isImage) {
               contentHtml = `
                 <img src="${plainText}" class="msg-img" alt="Shared photo" />
                 <div>
@@ -491,7 +493,6 @@
         sendBtn.textContent = "⏳...";
 
         try {
-          // Optimized for full screen resolution without breaking 1MB Firestore limit
           const base64Data = await readImageAsOptimizedDataURL(file);
           const { ciphertext, iv } = await encryptMessage(base64Data, cryptoKey);
 
@@ -514,7 +515,6 @@
       // Download photo to local storage & immediately delete from cloud
       window.downloadAndDelete = async function (docId, base64Url) {
         try {
-          // Trigger browser file download
           const link = document.createElement("a");
           link.href = base64Url;
           link.download = `photo_${Date.now()}.jpg`;
@@ -522,7 +522,6 @@
           link.click();
           document.body.removeChild(link);
 
-          // Delete from Firestore immediately
           await deleteDoc(doc(db, "messages", docId));
         } catch (err) {
           alert("Download/Delete error: " + err.message);
@@ -537,7 +536,7 @@
             const img = new Image();
             img.src = event.target.result;
             img.onload = () => {
-              const maxDim = 1280; // Crisp full-screen mobile/desktop clarity
+              const maxDim = 1000;
               let width = img.width;
               let height = img.height;
 
@@ -555,7 +554,7 @@
               const ctx = canvas.getContext("2d");
               ctx.drawImage(img, 0, 0, width, height);
 
-              resolve(canvas.toDataURL("image/jpeg", 0.8));
+              resolve(canvas.toDataURL("image/jpeg", 0.7));
             };
             img.onerror = reject;
           };
