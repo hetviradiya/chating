@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Private Room</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --card: #1e293b;
+        --text: #f8fafc;
+        --accent: #6366f1;
+        --mine: #4f46e5;
+        --theirs: #334155;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      body {
+        background-color: var(--bg);
+        color: var(--text);
+        display: flex;
+        justify-content: center;
+        height: 100dvh;
+      }
+      #app {
+        width: 100%;
+        max-width: 480px;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      /* Auth Screen */
+      #auth-screen {
+        margin: auto;
+        padding: 24px;
+        background: var(--card);
+        border-radius: 12px;
+        width: 90%;
+      }
+      h2 {
+        margin-bottom: 16px;
+        font-size: 1.2rem;
+        text-align: center;
+      }
+      input,
+      select,
+      button {
+        width: 100%;
+        padding: 12px;
+        margin-bottom: 12px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0f172a;
+        color: white;
+        font-size: 1rem;
+      }
+      button {
+        background: var(--accent);
+        border: none;
+        font-weight: bold;
+        cursor: pointer;
+      }
+      button:active {
+        opacity: 0.9;
+      }
+
+      /* Chat Screen */
+      #chat-screen {
+        display: none;
+        flex-direction: column;
+        height: 100%;
+      }
+      header {
+        padding: 16px;
+        background: var(--card);
+        border-bottom: 1px solid #334155;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      #chat-box {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .msg {
+        max-width: 75%;
+        padding: 10px 14px;
+        border-radius: 14px;
+        word-break: break-word;
+        font-size: 0.95rem;
+      }
+      .msg.mine {
+        align-self: flex-end;
+        background: var(--mine);
+        border-bottom-right-radius: 2px;
+      }
+      .msg.theirs {
+        align-self: flex-start;
+        background: var(--theirs);
+        border-bottom-left-radius: 2px;
+      }
+      .msg-time {
+        font-size: 0.7rem;
+        opacity: 0.6;
+        margin-top: 4px;
+        text-align: right;
+      }
+      footer {
+        padding: 12px;
+        background: var(--card);
+        display: flex;
+        gap: 8px;
+      }
+      footer input {
+        margin: 0;
+        flex: 1;
+      }
+      footer button {
+        width: auto;
+        padding: 0 20px;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Login / Setup Screen -->
+      <div id="auth-screen">
+        <h2>Secure Chat Room</h2>
+        <label style="font-size: 0.8rem; color: #94a3b8">Who are you?</label>
+        <select id="user-select">
+          <option value="PartnerA">Partner A</option>
+          <option value="PartnerB">Partner B</option>
+        </select>
+        <label style="font-size: 0.8rem; color: #94a3b8"
+          >Shared Secret Passphrase (Must match exactly)</label
+        >
+        <input
+          type="password"
+          id="secret-passphrase"
+          placeholder="e.g. our-secret-word-1234"
+        />
+        <button onclick="joinChat()">Enter Secure Chat</button>
+      </div>
+
+      <!-- Main Chat Screen -->
+      <div id="chat-screen">
+        <header>
+          <div>
+            <strong id="header-user"></strong>
+            <span style="font-size: 0.75rem; color: #10b981; margin-left: 6px"
+              >● E2EE Active</span
+            >
+          </div>
+          <button
+            onclick="location.reload()"
+            style="
+              width: auto;
+              padding: 4px 8px;
+              font-size: 0.75rem;
+              background: #ef4444;
+            "
+          >
+            Exit
+          </button>
+        </header>
+        <div id="chat-box"></div>
+        <footer>
+          <input
+            type="text"
+            id="msg-input"
+            placeholder="Type a message..."
+            onkeypress="handleEnter(event)"
+          />
+          <button onclick="sendMessage()">Send</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+      import {
+        getFirestore,
+        collection,
+        addDoc,
+        query,
+        orderBy,
+        limit,
+        onSnapshot,
+        serverTimestamp,
+      } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+      // === REPLACE THIS WITH YOUR FIREBASE CONFIG ===
+      const firebaseConfig = {
+        apiKey: "AIzaSyCOJGU8KaKbUrHzzDkH_8sVoiy2spofrmM",
+        authDomain: "chating-a20e0.firebaseapp.com",
+        projectId: "chating-a20e0",
+        storageBucket: "chating-a20e0.firebasestorage.app",
+        messagingSenderId: "314695357052",
+        appId: "1:314695357052:web:cfb63a5dcb19fa4c7e2ff9",
+        measurementId: "G-TFZW77YFWF",
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+
+      let currentUser = "";
+      let cryptoKey = null;
+      const renderedMessageIds = new Set();
+
+      // --- Web Crypto API: Key Derivation ---
+      async function deriveKey(passphrase) {
+        const enc = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey(
+          "raw",
+          enc.encode(passphrase),
+          "PBKDF2",
+          false,
+          ["deriveKey"],
+        );
+        // Hardcoded static salt for standard 2-person key derivation
+        const salt = enc.encode("our-custom-chat-salt-2026");
+        return window.crypto.subtle.deriveKey(
+          {
+            name: "PBKDF2",
+            salt: salt,
+            iterations: 100000,
+            hash: "SHA-256",
+          },
+          keyMaterial,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["encrypt", "decrypt"],
+        );
+      }
+
+      // --- Web Crypto API: Encrypt & Decrypt ---
+      async function encryptMessage(text, key) {
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encodedText = new TextEncoder().encode(text);
+        const cipherBuffer = await window.crypto.subtle.encrypt(
+          { name: "AES-GCM", iv: iv },
+          key,
+          encodedText,
+        );
+        return {
+          ciphertext: btoa(
+            String.fromCharCode(...new Uint8Array(cipherBuffer)),
+          ),
+          iv: btoa(String.fromCharCode(...iv)),
+        };
+      }
+
+      async function decryptMessage(cipherBase64, ivBase64, key) {
+        try {
+          const cipherBytes = Uint8Array.from(atob(cipherBase64), (c) =>
+            c.charCodeAt(0),
+          );
+          const ivBytes = Uint8Array.from(atob(ivBase64), (c) =>
+            c.charCodeAt(0),
+          );
+          const decryptedBuffer = await window.crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: ivBytes },
+            key,
+            cipherBytes,
+          );
+          return new TextDecoder().decode(decryptedBuffer);
+        } catch {
+          return "[Unable to decrypt - Passphrase mismatch]";
+        }
+      }
+
+      // --- UI & Lifecycle ---
+      window.joinChat = async function () {
+        const user = document.getElementById("user-select").value;
+        const passphrase = document
+          .getElementById("secret-passphrase")
+          .value.trim();
+
+        if (!passphrase) {
+          alert("Please enter your shared secret passphrase.");
+          return;
+        }
+
+        currentUser = user;
+        cryptoKey = await deriveKey(passphrase);
+
+        document.getElementById("auth-screen").style.display = "none";
+        document.getElementById("chat-screen").style.display = "flex";
+        document.getElementById("header-user").textContent = currentUser;
+
+        listenToMessages();
+      };
+
+      function listenToMessages() {
+        const q = query(
+          collection(db, "messages"),
+          orderBy("timestamp", "asc"),
+          limit(100),
+        );
+        const chatBox = document.getElementById("chat-box");
+
+        onSnapshot(q, (snapshot) => {
+          snapshot.docChanges().forEach(async (change) => {
+            if (change.type === "added") {
+              const docId = change.doc.id;
+              if (renderedMessageIds.has(docId)) return;
+              renderedMessageIds.add(docId);
+
+              const data = change.doc.data();
+              const plainText = await decryptMessage(
+                data.ciphertext,
+                data.iv,
+                cryptoKey,
+              );
+
+              const msgEl = document.createElement("div");
+              msgEl.className = `msg ${data.sender === currentUser ? "mine" : "theirs"}`;
+              msgEl.innerHTML = `
+            <div>${escapeHtml(plainText)}</div>
+            <div class="msg-time">${data.timestamp ? new Date(data.timestamp.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "just now"}</div>
+          `;
+              chatBox.appendChild(msgEl);
+              chatBox.scrollTop = chatBox.scrollHeight;
+            }
+          });
+        });
+      }
+
+      window.sendMessage = async function () {
+        const input = document.getElementById("msg-input");
+        const text = input.value.trim();
+        if (!text || !cryptoKey) return;
+
+        input.value = "";
+
+        // Encrypt client-side BEFORE sending to Firebase
+        const { ciphertext, iv } = await encryptMessage(text, cryptoKey);
+
+        await addDoc(collection(db, "messages"), {
+          sender: currentUser,
+          ciphertext: ciphertext,
+          iv: iv,
+          timestamp: serverTimestamp(),
+        });
+      };
+
+      window.handleEnter = function (event) {
+        if (event.key === "Enter") window.sendMessage();
+      };
+
+      function escapeHtml(str) {
+        return str
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+    </script>
+  </body>
+</html>
