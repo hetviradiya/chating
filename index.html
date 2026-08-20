@@ -34,7 +34,7 @@
         height: 100%;
       }
 
-      /* Auth Screen */
+      /* Login Screen */
       #auth-screen {
         margin: auto;
         padding: 24px;
@@ -127,19 +127,11 @@
         padding: 0 20px;
         margin: 0;
       }
-      #status-bar {
-        font-size: 0.75rem;
-        color: #f59e0b;
-        text-align: center;
-        padding: 4px;
-        background: #1e293b;
-        display: none;
-      }
     </style>
   </head>
   <body>
     <div id="app">
-      <!-- Login / Setup Screen -->
+      <!-- Login Setup Screen -->
       <div id="auth-screen">
         <h2>Secure Chat Room</h2>
         <label style="font-size: 0.8rem; color: #94a3b8">Who are you?</label>
@@ -147,11 +139,11 @@
           <option value="PartnerA">Partner A</option>
           <option value="PartnerB">Partner B</option>
         </select>
-        <label style="font-size: 0.8rem; color: #94a3b8">Shared Secret Passphrase (Must match exactly)</label>
+        <label style="font-size: 0.8rem; color: #94a3b8">Shared Secret Passphrase</label>
         <input
           type="password"
           id="secret-passphrase"
-          placeholder="e.g. our-secret-word-1234"
+          placeholder="e.g. 12345"
         />
         <button onclick="joinChat()">Enter Secure Chat</button>
       </div>
@@ -170,7 +162,6 @@
             Exit
           </button>
         </header>
-        <div id="status-bar"></div>
         <div id="chat-box"></div>
         <footer>
           <input
@@ -191,11 +182,7 @@
         getFirestore,
         collection,
         addDoc,
-        query,
-        orderBy,
-        limit,
         onSnapshot,
-        serverTimestamp,
       } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
       const firebaseConfig = {
@@ -215,14 +202,7 @@
       let cryptoKey = null;
       const renderedMessageIds = new Set();
 
-      function showStatus(text, isError = false) {
-        const bar = document.getElementById("status-bar");
-        bar.style.display = "block";
-        bar.style.color = isError ? "#ef4444" : "#f59e0b";
-        bar.textContent = text;
-      }
-
-      // Web Crypto API: Key Derivation
+      // Web Crypto API: PBKDF2 Key Derivation
       async function deriveKey(passphrase) {
         const enc = new TextEncoder();
         const keyMaterial = await window.crypto.subtle.importKey(
@@ -247,7 +227,7 @@
         );
       }
 
-      // Web Crypto API: Encrypt & Decrypt
+      // Web Crypto API: AES-256-GCM Encrypt & Decrypt
       async function encryptMessage(text, key) {
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
         const encodedText = new TextEncoder().encode(text);
@@ -273,17 +253,17 @@
           );
           return new TextDecoder().decode(decryptedBuffer);
         } catch {
-          return "[Encrypted message - Passphrase mismatch]";
+          return "[Encrypted - Passphrase Mismatch]";
         }
       }
 
-      // UI Actions
+      // UI Handlers
       window.joinChat = async function () {
         const user = document.getElementById("user-select").value;
         const passphrase = document.getElementById("secret-passphrase").value.trim();
 
         if (!passphrase) {
-          alert("Please enter your shared secret passphrase.");
+          alert("Please enter a passphrase.");
           return;
         }
 
@@ -291,7 +271,7 @@
         try {
           cryptoKey = await deriveKey(passphrase);
         } catch (e) {
-          alert("Error generating crypto key: " + e.message);
+          alert("Key derivation failed: " + e.message);
           return;
         }
 
@@ -303,43 +283,41 @@
       };
 
       function listenToMessages() {
-        const q = query(
-          collection(db, "messages"),
-          orderBy("timestamp", "asc"),
-          limit(100),
-        );
+        const colRef = collection(db, "messages");
         const chatBox = document.getElementById("chat-box");
 
         onSnapshot(
-          q,
+          colRef,
           (snapshot) => {
-            snapshot.docChanges().forEach(async (change) => {
-              if (change.type === "added") {
-                const docId = change.doc.id;
-                if (renderedMessageIds.has(docId)) return;
-                renderedMessageIds.add(docId);
+            let messages = [];
+            snapshot.forEach((doc) => {
+              messages.push({ id: doc.id, ...doc.data() });
+            });
 
-                const data = change.doc.data();
-                const plainText = await decryptMessage(
-                  data.ciphertext,
-                  data.iv,
-                  cryptoKey,
-                );
+            // Sort locally by creation timestamp
+            messages.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
-                const msgEl = document.createElement("div");
-                msgEl.className = `msg ${data.sender === currentUser ? "mine" : "theirs"}`;
-                msgEl.innerHTML = `
-                  <div>${escapeHtml(plainText)}</div>
-                  <div class="msg-time">${data.timestamp ? new Date(data.timestamp.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "just now"}</div>
-                `;
-                chatBox.appendChild(msgEl);
-                chatBox.scrollTop = chatBox.scrollHeight;
-              }
+            messages.forEach(async (data) => {
+              if (renderedMessageIds.has(data.id)) return;
+              renderedMessageIds.add(data.id);
+
+              const plainText = await decryptMessage(data.ciphertext, data.iv, cryptoKey);
+              const msgEl = document.createElement("div");
+              msgEl.className = `msg ${data.sender === currentUser ? "mine" : "theirs"}`;
+
+              const timeStr = data.createdAt
+                ? new Date(data.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "just now";
+
+              msgEl.innerHTML = `
+                <div>${escapeHtml(plainText)}</div>
+                <div class="msg-time">${timeStr}</div>
+              `;
+              chatBox.appendChild(msgEl);
+              chatBox.scrollTop = chatBox.scrollHeight;
             });
           },
           (error) => {
-            console.error("Firestore listen error:", error);
-            showStatus("Database Error: " + error.message, true);
             alert("Database Error: " + error.message);
           }
         );
@@ -347,26 +325,20 @@
 
       window.sendMessage = async function () {
         const input = document.getElementById("msg-input");
-        const sendBtn = document.getElementById("send-btn");
         const text = input.value.trim();
         if (!text || !cryptoKey) return;
 
         input.value = "";
-        sendBtn.disabled = true;
-
         try {
           const { ciphertext, iv } = await encryptMessage(text, cryptoKey);
           await addDoc(collection(db, "messages"), {
             sender: currentUser,
             ciphertext: ciphertext,
             iv: iv,
-            timestamp: serverTimestamp(),
+            createdAt: Date.now(),
           });
         } catch (error) {
-          console.error("Error sending message:", error);
           alert("Could not send message: " + error.message);
-        } finally {
-          sendBtn.disabled = false;
         }
       };
 
