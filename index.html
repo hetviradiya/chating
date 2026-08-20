@@ -131,7 +131,7 @@
   </head>
   <body>
     <div id="app">
-      <!-- Login Setup Screen -->
+      <!-- Login Screen -->
       <div id="auth-screen">
         <h2>Secure Chat Room</h2>
         <label style="font-size: 0.8rem; color: #94a3b8">Who are you?</label>
@@ -200,9 +200,13 @@
 
       let currentUser = "";
       let cryptoKey = null;
+      let isInitialLoad = true;
       const renderedMessageIds = new Set();
 
-      // Web Crypto API: PBKDF2 Key Derivation
+      // Audio Tone
+      const chimeSound = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+
+      // Key Derivation
       async function deriveKey(passphrase) {
         const enc = new TextEncoder();
         const keyMaterial = await window.crypto.subtle.importKey(
@@ -227,7 +231,7 @@
         );
       }
 
-      // Web Crypto API: AES-256-GCM Encrypt & Decrypt
+      // AES-GCM Encrypt & Decrypt
       async function encryptMessage(text, key) {
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
         const encodedText = new TextEncoder().encode(text);
@@ -257,7 +261,26 @@
         }
       }
 
-      // UI Handlers
+      // Send Browser Notification
+      function triggerNotification(sender, text) {
+        // Sound
+        chimeSound.play().catch(() => {});
+
+        // Vibration
+        if (navigator.vibrate) {
+          navigator.vibrate([100, 50, 100]);
+        }
+
+        // Native Browser Notification
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification(sender, {
+            body: text,
+            icon: "https://cdn-icons-png.flaticon.com/512/1041/1041916.png",
+          });
+        }
+      }
+
+      // Join Chat & Request Notification Permission
       window.joinChat = async function () {
         const user = document.getElementById("user-select").value;
         const passphrase = document.getElementById("secret-passphrase").value.trim();
@@ -267,11 +290,16 @@
           return;
         }
 
+        // Request browser permission for desktop / android popups
+        if ("Notification" in window && Notification.permission !== "granted") {
+          Notification.requestPermission();
+        }
+
         currentUser = user;
         try {
           cryptoKey = await deriveKey(passphrase);
         } catch (e) {
-          alert("Key derivation failed: " + e.message);
+          alert("Key error: " + e.message);
           return;
         }
 
@@ -294,7 +322,6 @@
               messages.push({ id: doc.id, ...doc.data() });
             });
 
-            // Sort locally by creation timestamp
             messages.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
             messages.forEach(async (data) => {
@@ -315,10 +342,17 @@
               `;
               chatBox.appendChild(msgEl);
               chatBox.scrollTop = chatBox.scrollHeight;
+
+              // Fire alert for new incoming message (skip during initial page history load)
+              if (!isInitialLoad && data.sender !== currentUser) {
+                triggerNotification(data.sender, plainText);
+              }
             });
+
+            isInitialLoad = false;
           },
           (error) => {
-            alert("Database Error: " + error.message);
+            alert("Database error: " + error.message);
           }
         );
       }
@@ -338,7 +372,7 @@
             createdAt: Date.now(),
           });
         } catch (error) {
-          alert("Could not send message: " + error.message);
+          alert("Could not send: " + error.message);
         }
       };
 
