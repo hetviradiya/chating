@@ -12,6 +12,7 @@
         --accent: #6366f1;
         --mine: #4f46e5;
         --theirs: #334155;
+        --danger: #ef4444;
       }
       * {
         box-sizing: border-box;
@@ -63,9 +64,7 @@
         font-weight: bold;
         cursor: pointer;
       }
-      button:active {
-        opacity: 0.9;
-      }
+      button:active { opacity: 0.9; }
 
       /* Chat Screen */
       #chat-screen {
@@ -74,13 +73,26 @@
         height: 100%;
       }
       header {
-        padding: 16px;
+        padding: 12px 16px;
         background: var(--card);
         border-bottom: 1px solid #334155;
         display: flex;
         justify-content: space-between;
         align-items: center;
       }
+      .header-actions {
+        display: flex;
+        gap: 6px;
+      }
+      .btn-sm {
+        width: auto;
+        padding: 6px 10px;
+        font-size: 0.75rem;
+        margin: 0;
+      }
+      .btn-danger { background: var(--danger); }
+      .btn-gray { background: #475569; }
+
       #chat-box {
         flex: 1;
         overflow-y: auto;
@@ -90,11 +102,12 @@
         gap: 10px;
       }
       .msg {
-        max-width: 75%;
+        max-width: 78%;
         padding: 10px 14px;
         border-radius: 14px;
         word-break: break-word;
         font-size: 0.95rem;
+        position: relative;
       }
       .msg.mine {
         align-self: flex-end;
@@ -106,32 +119,43 @@
         background: var(--theirs);
         border-bottom-left-radius: 2px;
       }
+      .msg-meta {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 6px;
+        margin-top: 4px;
+      }
       .msg-time {
         font-size: 0.7rem;
         opacity: 0.6;
-        margin-top: 4px;
-        text-align: right;
       }
+      .delete-btn {
+        background: transparent;
+        color: #fca5a5;
+        border: none;
+        font-size: 0.75rem;
+        cursor: pointer;
+        padding: 0 2px;
+        width: auto;
+        margin: 0;
+        opacity: 0.7;
+      }
+      .delete-btn:hover { opacity: 1; color: #ffffff; }
+
       footer {
         padding: 12px;
         background: var(--card);
         display: flex;
         gap: 8px;
       }
-      footer input {
-        margin: 0;
-        flex: 1;
-      }
-      footer button {
-        width: auto;
-        padding: 0 20px;
-        margin: 0;
-      }
+      footer input { margin: 0; flex: 1; }
+      footer button { width: auto; padding: 0 20px; margin: 0; }
     </style>
   </head>
   <body>
     <div id="app">
-      <!-- Login Screen -->
+      <!-- Login Setup Screen -->
       <div id="auth-screen">
         <h2>Secure Chat Room</h2>
         <label style="font-size: 0.8rem; color: #94a3b8">Who are you?</label>
@@ -140,11 +164,7 @@
           <option value="PartnerB">Partner B</option>
         </select>
         <label style="font-size: 0.8rem; color: #94a3b8">Shared Secret Passphrase</label>
-        <input
-          type="password"
-          id="secret-passphrase"
-          placeholder="e.g. 12345"
-        />
+        <input type="password" id="secret-passphrase" placeholder="e.g. 12345" />
         <button onclick="joinChat()">Enter Secure Chat</button>
       </div>
 
@@ -155,12 +175,10 @@
             <strong id="header-user"></strong>
             <span style="font-size: 0.75rem; color: #10b981; margin-left: 6px">● E2EE Active</span>
           </div>
-          <button
-            onclick="location.reload()"
-            style="width: auto; padding: 4px 8px; font-size: 0.75rem; background: #ef4444;"
-          >
-            Exit
-          </button>
+          <div class="header-actions">
+            <button class="btn-sm btn-danger" onclick="clearAllChat()">Clear Chat</button>
+            <button class="btn-sm btn-gray" onclick="location.reload()">Exit</button>
+          </div>
         </header>
         <div id="chat-box"></div>
         <footer>
@@ -182,6 +200,9 @@
         getFirestore,
         collection,
         addDoc,
+        deleteDoc,
+        doc,
+        getDocs,
         onSnapshot,
       } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
@@ -201,12 +222,10 @@
       let currentUser = "";
       let cryptoKey = null;
       let isInitialLoad = true;
-      const renderedMessageIds = new Set();
 
-      // Audio Tone
       const chimeSound = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
 
-      // Key Derivation
+      // Key derivation
       async function deriveKey(passphrase) {
         const enc = new TextEncoder();
         const keyMaterial = await window.crypto.subtle.importKey(
@@ -231,7 +250,7 @@
         );
       }
 
-      // AES-GCM Encrypt & Decrypt
+      // Encrypt & Decrypt
       async function encryptMessage(text, key) {
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
         const encodedText = new TextEncoder().encode(text);
@@ -261,17 +280,9 @@
         }
       }
 
-      // Send Browser Notification
       function triggerNotification(sender, text) {
-        // Sound
         chimeSound.play().catch(() => {});
-
-        // Vibration
-        if (navigator.vibrate) {
-          navigator.vibrate([100, 50, 100]);
-        }
-
-        // Native Browser Notification
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
         if ("Notification" in window && Notification.permission === "granted") {
           new Notification(sender, {
             body: text,
@@ -280,7 +291,6 @@
         }
       }
 
-      // Join Chat & Request Notification Permission
       window.joinChat = async function () {
         const user = document.getElementById("user-select").value;
         const passphrase = document.getElementById("secret-passphrase").value.trim();
@@ -290,7 +300,6 @@
           return;
         }
 
-        // Request browser permission for desktop / android popups
         if ("Notification" in window && Notification.permission !== "granted") {
           Notification.requestPermission();
         }
@@ -310,53 +319,63 @@
         listenToMessages();
       };
 
+      // Realtime listener supporting Instant Add & Delete
       function listenToMessages() {
         const colRef = collection(db, "messages");
         const chatBox = document.getElementById("chat-box");
 
-        onSnapshot(
-          colRef,
-          (snapshot) => {
-            let messages = [];
-            snapshot.forEach((doc) => {
-              messages.push({ id: doc.id, ...doc.data() });
-            });
+        onSnapshot(colRef, async (snapshot) => {
+          let messages = [];
+          snapshot.forEach((docSnap) => {
+            messages.push({ id: docSnap.id, ...docSnap.data() });
+          });
 
-            messages.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+          // Sort messages by creation time
+          messages.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
-            messages.forEach(async (data) => {
-              if (renderedMessageIds.has(data.id)) return;
-              renderedMessageIds.add(data.id);
+          // Re-render UI list
+          chatBox.innerHTML = "";
+          for (const data of messages) {
+            const plainText = await decryptMessage(data.ciphertext, data.iv, cryptoKey);
+            const isMine = data.sender === currentUser;
 
-              const plainText = await decryptMessage(data.ciphertext, data.iv, cryptoKey);
-              const msgEl = document.createElement("div");
-              msgEl.className = `msg ${data.sender === currentUser ? "mine" : "theirs"}`;
+            const msgEl = document.createElement("div");
+            msgEl.className = `msg ${isMine ? "mine" : "theirs"}`;
 
-              const timeStr = data.createdAt
-                ? new Date(data.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                : "just now";
+            const timeStr = data.createdAt
+              ? new Date(data.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+              : "just now";
 
-              msgEl.innerHTML = `
-                <div>${escapeHtml(plainText)}</div>
-                <div class="msg-time">${timeStr}</div>
-              `;
-              chatBox.appendChild(msgEl);
-              chatBox.scrollTop = chatBox.scrollHeight;
+            const deleteActionHtml = isMine
+              ? `<button class="delete-btn" onclick="deleteSingleMessage('${data.id}')" title="Delete message">✕</button>`
+              : "";
 
-              // Fire alert for new incoming message (skip during initial page history load)
-              if (!isInitialLoad && data.sender !== currentUser) {
-                triggerNotification(data.sender, plainText);
-              }
-            });
-
-            isInitialLoad = false;
-          },
-          (error) => {
-            alert("Database error: " + error.message);
+            msgEl.innerHTML = `
+              <div>${escapeHtml(plainText)}</div>
+              <div class="msg-meta">
+                <span class="msg-time">${timeStr}</span>
+                ${deleteActionHtml}
+              </div>
+            `;
+            chatBox.appendChild(msgEl);
           }
-        );
+
+          chatBox.scrollTop = chatBox.scrollHeight;
+
+          // Sound/notification for newest incoming message
+          if (!isInitialLoad && snapshot.docChanges().some(c => c.type === "added" && c.doc.data().sender !== currentUser)) {
+            const latest = messages[messages.length - 1];
+            if (latest && latest.sender !== currentUser) {
+              const plain = await decryptMessage(latest.ciphertext, latest.iv, cryptoKey);
+              triggerNotification(latest.sender, plain);
+            }
+          }
+
+          isInitialLoad = false;
+        });
       }
 
+      // Send Message
       window.sendMessage = async function () {
         const input = document.getElementById("msg-input");
         const text = input.value.trim();
@@ -373,6 +392,32 @@
           });
         } catch (error) {
           alert("Could not send: " + error.message);
+        }
+      };
+
+      // 1. Delete a Single Message
+      window.deleteSingleMessage = async function (messageId) {
+        if (!confirm("Delete this message?")) return;
+        try {
+          await deleteDoc(doc(db, "messages", messageId));
+        } catch (err) {
+          alert("Failed to delete message: " + err.message);
+        }
+      };
+
+      // 2. Clear Entire Chat Room
+      window.clearAllChat = async function () {
+        if (!confirm("Are you sure you want to delete ALL messages for both people?")) return;
+        try {
+          const colRef = collection(db, "messages");
+          const snapshot = await getDocs(colRef);
+          const deletePromises = [];
+          snapshot.forEach((docSnap) => {
+            deletePromises.push(deleteDoc(doc(db, "messages", docSnap.id)));
+          });
+          await Promise.all(deletePromises);
+        } catch (err) {
+          alert("Failed to clear chat: " + err.message);
         }
       };
 
