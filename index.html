@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"
     />
-    <title>Hello</title>
+    <title>Private Room</title>
     <style>
       :root {
         --bg: #0f172a;
@@ -46,34 +46,45 @@
         position: relative;
       }
 
-      /* Login Screen */
-      #auth-screen {
+      /* Auth & Register Screens */
+      .auth-card {
         margin: auto;
         padding: 24px;
         background: var(--card);
         border-radius: 12px;
         width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
       }
       h2 {
-        margin-bottom: 16px;
+        margin-bottom: 12px;
         font-size: 1.2rem;
         text-align: center;
       }
+      .section-label {
+        font-size: 0.8rem;
+        font-weight: bold;
+        color: var(--accent);
+        margin-top: 10px;
+        margin-bottom: 4px;
+        display: block;
+      }
       input, select, button {
         width: 100%;
-        padding: 12px;
-        margin-bottom: 12px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
         border-radius: 8px;
         border: 1px solid #475569;
         background: #0f172a;
         color: white;
-        font-size: 1rem;
+        font-size: 0.95rem;
       }
       button {
         background: var(--accent);
         border: none;
         font-weight: bold;
         cursor: pointer;
+        margin-top: 8px;
       }
       button:active { opacity: 0.9; }
 
@@ -192,7 +203,7 @@
       footer input[type="text"] {
         margin: 0;
         flex: 1;
-        font-size: 16px; /* Prevents auto zoom-in on iOS */
+        font-size: 16px;
       }
       footer button {
         width: auto;
@@ -211,27 +222,48 @@
         cursor: pointer;
         font-size: 1.2rem;
       }
-      #file-input {
-        display: none;
-      }
+      #file-input { display: none; }
     </style>
   </head>
   <body>
     <div id="app">
-      <!-- Login Setup Screen -->
-      <div id="auth-screen">
-        <h2>Secure Chat Room</h2>
-        <label style="font-size: 0.8rem; color: #94a3b8">Who are you?</label>
-        <select id="user-select">
-          <option value="PartnerA">Partner A</option>
-          <option value="PartnerB">Partner B</option>
-        </select>
-        <label style="font-size: 0.8rem; color: #94a3b8">Shared Secret Passphrase</label>
-        <input type="password" id="secret-passphrase" placeholder="e.g. 12345" />
-        <button onclick="joinChat()">Enter Secure Chat</button>
+      <!-- 1. Initial 2-Person Registration Screen (Shown only once) -->
+      <div id="register-screen" class="auth-card" style="display: none;">
+        <h2>Setup 2-Person Chat</h2>
+        <p style="font-size: 0.75rem; color: #94a3b8; text-align: center; margin-bottom: 12px;">
+          Define credentials for both participants. This setup can only be done once.
+        </p>
+
+        <span class="section-label">Person 1 (Your Account)</span>
+        <input type="text" id="reg-u1-name" placeholder="User 1 Username" />
+        <input type="password" id="reg-u1-pass" placeholder="User 1 Password" />
+
+        <span class="section-label">Person 2 (Partner's Account)</span>
+        <input type="text" id="reg-u2-name" placeholder="User 2 Username" />
+        <input type="password" id="reg-u2-pass" placeholder="User 2 Password" />
+
+        <span class="section-label">Shared Encryption Passphrase</span>
+        <input type="password" id="reg-secret" placeholder="Secret Key (Used for E2EE)" />
+
+        <button onclick="registerUsers()">Save & Lock Accounts</button>
       </div>
 
-      <!-- Main Chat Screen -->
+      <!-- 2. Regular Login Screen -->
+      <div id="login-screen" class="auth-card" style="display: none;">
+        <h2>Secure Chat Login</h2>
+        <label style="font-size: 0.8rem; color: #94a3b8">Username</label>
+        <input type="text" id="login-username" placeholder="Enter your username" />
+
+        <label style="font-size: 0.8rem; color: #94a3b8">Password</label>
+        <input type="password" id="login-password" placeholder="Enter your password" />
+
+        <label style="font-size: 0.8rem; color: #94a3b8">Shared Encryption Passphrase</label>
+        <input type="password" id="login-secret" placeholder="Shared Secret Key" />
+
+        <button onclick="handleLogin()">Login to Chat</button>
+      </div>
+
+      <!-- 3. Main Chat Screen -->
       <div id="chat-screen">
         <header>
           <div>
@@ -258,16 +290,14 @@
       </div>
     </div>
 
-    <!-- Mobile Keyboard & Viewport Fix -->
+    <!-- Mobile Viewport Fix -->
     <script>
       function adjustViewport() {
         if (window.visualViewport) {
           const app = document.getElementById("app");
           app.style.height = `${window.visualViewport.height}px`;
           const chatBox = document.getElementById("chat-box");
-          if (chatBox) {
-            chatBox.scrollTop = chatBox.scrollHeight;
-          }
+          if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
         }
       }
 
@@ -299,6 +329,8 @@
         addDoc,
         deleteDoc,
         doc,
+        getDoc,
+        setDoc,
         getDocs,
         onSnapshot,
       } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -319,11 +351,125 @@
       let currentUser = "";
       let cryptoKey = null;
       let isInitialLoad = true;
+      let cachedConfig = null;
 
       const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
       const FOUR_MONTHS_MS = 120 * 24 * 60 * 60 * 1000;
 
       const chimeSound = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+
+      // Password hashing using SHA-256
+      async function hashText(plain) {
+        const utf8 = new TextEncoder().encode(plain);
+        const hashBuffer = await window.crypto.subtle.digest("SHA-256", utf8);
+        return Array.from(new Uint8Array(hashBuffer))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      // Check Registration Status on Page Load
+      async function initAuth() {
+        try {
+          const configRef = doc(db, "app_config", "credentials");
+          const configSnap = await getDoc(configRef);
+
+          if (configSnap.exists()) {
+            cachedConfig = configSnap.data();
+            document.getElementById("login-screen").style.display = "block";
+          } else {
+            document.getElementById("register-screen").style.display = "block";
+          }
+        } catch (err) {
+          alert("Initialization error: " + err.message);
+        }
+      }
+      initAuth();
+
+      // Register both users in a single operation
+      window.registerUsers = async function () {
+        const u1Name = document.getElementById("reg-u1-name").value.trim();
+        const u1Pass = document.getElementById("reg-u1-pass").value.trim();
+        const u2Name = document.getElementById("reg-u2-name").value.trim();
+        const u2Pass = document.getElementById("reg-u2-pass").value.trim();
+        const secret = document.getElementById("reg-secret").value.trim();
+
+        if (!u1Name || !u1Pass || !u2Name || !u2Pass || !secret) {
+          alert("All fields are required.");
+          return;
+        }
+
+        if (u1Name.toLowerCase() === u2Name.toLowerCase()) {
+          alert("Usernames must be different.");
+          return;
+        }
+
+        try {
+          const [h1, h2] = await Promise.all([hashText(u1Pass), hashText(u2Pass)]);
+
+          await setDoc(doc(db, "app_config", "credentials"), {
+            u1Name,
+            u1PassHash: h1,
+            u2Name,
+            u2PassHash: h2,
+            isConfigured: true,
+            createdAt: Date.now(),
+          });
+
+          alert("Accounts registered successfully! You can now log in.");
+          location.reload();
+        } catch (e) {
+          alert("Registration failed: " + e.message);
+        }
+      };
+
+      // Handle user login
+      window.handleLogin = async function () {
+        const userIn = document.getElementById("login-username").value.trim();
+        const passIn = document.getElementById("login-password").value.trim();
+        const secretIn = document.getElementById("login-secret").value.trim();
+
+        if (!userIn || !passIn || !secretIn) {
+          alert("Please fill all fields.");
+          return;
+        }
+
+        if (!cachedConfig) {
+          alert("Configuration missing. Please refresh.");
+          return;
+        }
+
+        const inputHash = await hashText(passIn);
+        let authenticatedUser = null;
+
+        if (userIn === cachedConfig.u1Name && inputHash === cachedConfig.u1PassHash) {
+          authenticatedUser = cachedConfig.u1Name;
+        } else if (userIn === cachedConfig.u2Name && inputHash === cachedConfig.u2PassHash) {
+          authenticatedUser = cachedConfig.u2Name;
+        } else {
+          alert("Invalid username or password.");
+          return;
+        }
+
+        if ("Notification" in window && Notification.permission !== "granted") {
+          Notification.requestPermission();
+        }
+
+        currentUser = authenticatedUser;
+        try {
+          cryptoKey = await deriveKey(secretIn);
+        } catch (e) {
+          alert("Key error: " + e.message);
+          return;
+        }
+
+        document.getElementById("login-screen").style.display = "none";
+        document.getElementById("chat-screen").style.display = "flex";
+        document.getElementById("header-user").textContent = currentUser;
+
+        adjustViewport();
+        runAutoPurge();
+        listenToMessages();
+      };
 
       async function deriveKey(passphrase) {
         const enc = new TextEncoder();
@@ -412,36 +558,6 @@
           console.warn("Auto purge check error:", e);
         }
       }
-
-      window.joinChat = async function () {
-        const user = document.getElementById("user-select").value;
-        const passphrase = document.getElementById("secret-passphrase").value.trim();
-
-        if (!passphrase) {
-          alert("Please enter a passphrase.");
-          return;
-        }
-
-        if ("Notification" in window && Notification.permission !== "granted") {
-          Notification.requestPermission();
-        }
-
-        currentUser = user;
-        try {
-          cryptoKey = await deriveKey(passphrase);
-        } catch (e) {
-          alert("Key error: " + e.message);
-          return;
-        }
-
-        document.getElementById("auth-screen").style.display = "none";
-        document.getElementById("chat-screen").style.display = "flex";
-        document.getElementById("header-user").textContent = currentUser;
-
-        adjustViewport();
-        runAutoPurge();
-        listenToMessages();
-      };
 
       function listenToMessages() {
         const colRef = collection(db, "messages");
